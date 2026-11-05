@@ -1,4 +1,4 @@
-import { addDays } from './dates.js'
+import { addDays, formatDayMonth } from './dates.js'
 
 // Палитра задач (без красного — красный означает пропуск). В базе хранится имя, в UI — var(--h-<имя>).
 export const PALETTE = [
@@ -75,6 +75,13 @@ export function habitInfo(habit, days, today) {
     streak: currentStreak(days, today),
     best: bestStreak(days),
   }
+}
+
+// Подпись для задачи, которая ещё не стартовала: «завтра», «12 ноября», «12 января 2027».
+export function upcomingStartText(start, today) {
+  if (start === addDays(today, 1)) return 'завтра'
+  const year = start.slice(0, 4)
+  return year === today.slice(0, 4) ? formatDayMonth(start) : `${formatDayMonth(start)} ${year}`
 }
 
 // Самый ранний год среди start_date задач и отметок (не позже текущего) — граница листания назад.

@@ -1,6 +1,7 @@
 // Проверка правил статистики на граничных случаях (см. CLAUDE.md). Запуск: npm run check
 import assert from 'node:assert/strict'
 import { addDays } from '../src/lib/dates.js'
+import { currentStreak, dayStatus, earliestYear, upcomingStartText } from '../src/lib/habits.js'
 import { computeStats, canShift, periodLabel, periodRange, shiftPeriod } from '../src/lib/stats.js'
 
 const T = '2026-11-05'
@@ -103,6 +104,42 @@ ok('% никогда не больше 100 даже при отметках до
   const D = H('2026-10-20', range('2026-10-01', '2026-10-31'))
   const s = computeStats('month', '2026-10-01', [D], T)
   assert.deepEqual([s.possible, s.done, s.marks, s.pct], [12, 12, 31, 100])
+})
+
+// Задача с будущим стартом
+ok('будущий старт без отметок: возможных 0, «—», идеальных нет', () => {
+  const F = H('2026-12-01', [])
+  for (const kind of ['week', 'month', 'year']) {
+    const s = computeStats(kind, T, [F], T)
+    assert.deepEqual([s.possible, s.done, s.marks, s.pct, s.perfect, s.perfectOf], [0, 0, 0, null, 0, 0])
+    assert.equal(s.rows[0].pct, null)
+    assert.ok(s.bars.every((b) => b.value === null))
+  }
+})
+ok('будущий старт с отметками: только «Отметок» и серия', () => {
+  const F = H('2026-11-06', ['2026-11-04', T])
+  const s = computeStats('week', T, [F], T)
+  assert.deepEqual([s.possible, s.done, s.marks, s.pct, s.perfectOf], [0, 0, 2, null, 0])
+  assert.ok(s.bars.every((b) => b.value === null))
+  assert.equal(currentStreak(F.days, T), 2)
+})
+ok('будущий старт не портит расчёт других задач', () => {
+  const X = H('2026-11-02', range('2026-11-02', T))
+  const s = computeStats('week', T, [X, H('2026-12-01', [])], T)
+  assert.deepEqual([s.possible, s.done, s.pct, s.perfect, s.perfectOf], [4, 4, 100, 4, 4])
+  assert.equal(s.rows[1].pct, null)
+  assert.equal(s.bars[3].full, true)
+})
+ok('будущий старт: статусы дней, граница листания, подпись', () => {
+  const info = { start: '2026-12-01', days: new Set(['2026-11-04']) }
+  assert.equal(dayStatus(T, info, T), 'none')
+  assert.equal(dayStatus('2026-11-03', info, T), 'none')
+  assert.equal(dayStatus('2026-11-04', info, T), 'done')
+  assert.equal(earliestYear([{ habit: { start_date: '2027-03-01' }, days: new Set() }], T), 2026)
+  assert.equal(upcomingStartText('2026-11-06', T), 'завтра')
+  assert.equal(upcomingStartText('2026-11-12', T), '12 ноября')
+  assert.equal(upcomingStartText('2027-01-12', T), '12 января 2027')
+  assert.equal(upcomingStartText('2027-01-01', '2026-12-31'), 'завтра')
 })
 
 // Периоды и подписи

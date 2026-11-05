@@ -1,5 +1,5 @@
 import { addDays, daysText, formatDayMonth, formatLongDay, WEEKDAY_LETTERS, weekdayMon0 } from '../lib/dates.js'
-import { colorVar, dayStatus } from '../lib/habits.js'
+import { colorVar, dayStatus, upcomingStartText } from '../lib/habits.js'
 import { noMouseFocus } from '../lib/noMouseFocus.js'
 import StarterCard from '../components/StarterCard.jsx'
 
@@ -19,8 +19,10 @@ function CheckIcon() {
 }
 
 export default function Today({ today, infos, onToggle, onStarter, onGoHabits }) {
-  const total = infos.length
-  const done = infos.filter((x) => x.days.has(today)).length
+  // Итог и кольцо — только по стартовавшим задачам; отметка до старта в них не входит.
+  const started = infos.filter((x) => x.start <= today)
+  const total = started.length
+  const done = started.filter((x) => x.days.has(today)).length
   const pct = total ? Math.round((done / total) * 100) : 0
   const week = Array.from({ length: 7 }, (_, i) => addDays(today, i - 6))
 
@@ -39,7 +41,7 @@ export default function Today({ today, infos, onToggle, onStarter, onGoHabits })
         )}
       </div>
 
-      {total === 0 ? (
+      {infos.length === 0 ? (
         <StarterCard onStarter={onStarter}>
           <button type="button" className="btn ghost" onClick={onGoHabits}>Свои задачи</button>
         </StarterCard>
@@ -47,10 +49,15 @@ export default function Today({ today, infos, onToggle, onStarter, onGoHabits })
         <>
           <div className="list">
             {infos.map((info) => {
-              const { habit, days, streak, best } = info
+              const { habit, days, start, streak, best } = info
               const on = days.has(today)
+              const upcoming = start > today
               return (
-                <article key={habit.id} className="habit-row" style={{ '--hc': colorVar(habit.color) }}>
+                <article
+                  key={habit.id}
+                  className={upcoming ? 'habit-row upcoming' : 'habit-row'}
+                  style={{ '--hc': colorVar(habit.color) }}
+                >
                   <button
                     className={on ? 'check on' : 'check'}
                     type="button"
@@ -63,7 +70,11 @@ export default function Today({ today, infos, onToggle, onStarter, onGoHabits })
                   </button>
                   <div className="habit-main">
                     <h3>{habit.name}</h3>
-                    <p className="meta">Серия: <b>{daysText(streak)}</b> · рекорд {daysText(best)}</p>
+                    {upcoming ? (
+                      <p className="meta">Старт: <b>{upcomingStartText(start, today)}</b></p>
+                    ) : (
+                      <p className="meta">Серия: <b>{daysText(streak)}</b> · рекорд {daysText(best)}</p>
+                    )}
                   </div>
                   <div className="strip" aria-label="Последние 7 дней">
                     {week.map((day) => {

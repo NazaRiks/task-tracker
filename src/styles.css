@@ -123,6 +123,7 @@ button, input { font: inherit; color: inherit; }
 .list { display: flex; flex-direction: column; gap: 10px; }
 .habit-row { display: flex; align-items: center; gap: 16px; padding: 14px 18px 14px 14px; }
 .habit-row { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow); }
+.habit-row.upcoming { opacity: .55; }
 .check {
   width: 52px; height: 52px; border-radius: 15px; flex: none; cursor: pointer; display: grid; place-items: center;
   background: transparent; border: 2px dashed color-mix(in srgb, var(--hc) 55%, var(--line));

@@ -1,19 +1,22 @@
 import { useRef, useState } from 'react'
+import { addDays } from '../lib/dates.js'
 import { colorVar, MAX_NAME, nextFreeColor } from '../lib/habits.js'
 import Swatches from '../components/Swatches.jsx'
 import StarterCard from '../components/StarterCard.jsx'
 
 const MIN_START = '2000-01-01'
+const MAX_START_AHEAD_DAYS = 365
 
 // Дата старта: черновик сохраняется при уходе из поля или Enter (иначе при наборе года
 // с клавиатуры улетали бы промежуточные даты). Пустое или некорректное значение откатывается.
 function StartField({ habit, today, onStart }) {
   const [draft, setDraft] = useState(null)
   const value = draft ?? habit.start_date
+  const maxStart = addDays(today, MAX_START_AHEAD_DAYS)
 
   function commit() {
     setDraft(null)
-    if (draft && draft !== habit.start_date && draft >= MIN_START && draft <= today) {
+    if (draft && draft !== habit.start_date && draft >= MIN_START && draft <= maxStart) {
       onStart(habit.id, draft)
     }
   }
@@ -24,7 +27,7 @@ function StartField({ habit, today, onStart }) {
       <input
         type="date"
         min={MIN_START}
-        max={today}
+        max={maxStart}
         required
         value={value}
         onChange={(e) => setDraft(e.target.value)}
