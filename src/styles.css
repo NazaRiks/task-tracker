@@ -149,6 +149,7 @@ button, input { font: inherit; color: inherit; }
 .year-switch { display: flex; align-items: center; gap: 6px; }
 .icon { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); cursor: pointer; font-size: 16px; color: var(--fg); }
 .icon:disabled { opacity: .35; cursor: default; }
+button.icon:disabled { opacity: .35; cursor: default; pointer-events: none; }
 .year-card { border-radius: var(--r-lg); padding: 18px 20px 16px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); }
 .year-card { background: var(--surface); color: var(--fg); box-shadow: var(--shadow); }
 .year-card header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }

@@ -91,8 +91,12 @@ const YearCard = memo(function YearCard({ habit, days, start, today, layout, onT
 
 export default function Year({ year, onYear, today, infos, onToggle, onStarter }) {
   const layout = useMemo(() => yearLayout(year), [year])
-  const minYear = useMemo(() => earliestYear(infos, today), [infos, today])
-  const maxYear = Number(today.slice(0, 4))
+  // Назад — не раньше min(самый ранний год из данных, текущий − 1), вперёд — до текущего + 1.
+  // Для лет без данных сетка просто серая, счётчики 0.
+  const currentYear = Number(today.slice(0, 4))
+  const dataYear = useMemo(() => earliestYear(infos, today), [infos, today])
+  const minYear = Math.min(dataYear, currentYear - 1)
+  const maxYear = currentYear + 1
 
   return (
     <section className="screen s-year">
