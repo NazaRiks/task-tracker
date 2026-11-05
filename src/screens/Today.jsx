@@ -1,5 +1,6 @@
 import { addDays, daysText, formatDayMonth, formatLongDay, WEEKDAY_LETTERS, weekdayMon0 } from '../lib/dates.js'
 import { colorVar, dayStatus } from '../lib/habits.js'
+import { noMouseFocus } from '../lib/noMouseFocus.js'
 import StarterCard from '../components/StarterCard.jsx'
 
 const STATUS_TEXT = {
@@ -8,9 +9,6 @@ const STATUS_TEXT = {
   pending: 'не отмечено',
   none: 'до старта',
 }
-
-// Клик мышью не передаёт кнопке фокус — рамка остаётся только для клавиатуры (:focus-visible).
-const noMouseFocus = (e) => e.preventDefault()
 
 function CheckIcon() {
   return (

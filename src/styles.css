@@ -170,6 +170,10 @@ button, input { font: inherit; color: inherit; }
 .cell.pending { background: transparent; box-shadow: inset 0 0 0 1.5px var(--pending); }
 span.cell:not(.future):not(.none) { cursor: pointer; }
 span.cell:not(.future):not(.none):hover { outline: 2px solid var(--fg); outline-offset: 1px; }
+button.cell { border: 0; padding: 0; margin: 0; width: 100%; font: inherit; color: inherit; outline: none; }
+button.cell:not(.future) { cursor: pointer; }
+button.cell:not(.future):hover, button.cell:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+button.cell.future { cursor: default; }
 .legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
 .legend span { display: flex; align-items: center; gap: 6px; }
 .legend .cell { width: 11px; height: 11px; }

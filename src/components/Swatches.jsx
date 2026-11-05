@@ -1,4 +1,5 @@
 import { PALETTE, colorVar } from '../lib/habits.js'
+import { noMouseFocus } from '../lib/noMouseFocus.js'
 
 export default function Swatches({ value, onChange }) {
   return (
@@ -12,6 +13,7 @@ export default function Swatches({ value, onChange }) {
           title={c.label}
           aria-label={c.label}
           aria-pressed={c.id === value}
+          onMouseDown={noMouseFocus}
           onClick={() => c.id !== value && onChange(c.id)}
         />
       ))}

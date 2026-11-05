@@ -9,6 +9,7 @@ import NotConfigured from './components/NotConfigured.jsx'
 import Toast from './components/Toast.jsx'
 import Today from './screens/Today.jsx'
 import Habits from './screens/Habits.jsx'
+import Year from './screens/Year.jsx'
 
 const EMPTY = new Set()
 
@@ -45,6 +46,7 @@ function Main({ session }) {
   const clearNotice = useCallback(() => setNotice(''), [])
 
   const today = useToday()
+  const [year, setYear] = useState(() => Number(today.slice(0, 4)))
   const data = useTrackerData(setNotice)
   const { habits, checkins, toggle: toggleCheckin } = data
 
@@ -92,6 +94,17 @@ function Main({ session }) {
         onToggle={toggle}
         onStarter={addStarter}
         onGoHabits={() => setTab('habits')}
+      />
+    )
+  } else if (tab === 'year') {
+    content = (
+      <Year
+        year={year}
+        onYear={setYear}
+        today={today}
+        infos={infos}
+        onToggle={toggle}
+        onStarter={addStarter}
       />
     )
   } else if (tab === 'habits') {

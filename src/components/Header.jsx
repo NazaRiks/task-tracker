@@ -1,3 +1,4 @@
+import { noMouseFocus } from '../lib/noMouseFocus.js'
 import Logo from './Logo.jsx'
 
 export const TABS = [
@@ -23,6 +24,7 @@ export default function Header({ tab, onTab, email, onSignOut, signingOut }) {
             type="button"
             className={tab === t.id ? 'on' : undefined}
             aria-current={tab === t.id ? 'page' : undefined}
+            onMouseDown={noMouseFocus}
             onClick={() => onTab(t.id)}
           >
             {t.label}
