@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# секреты
+.env
+.env.*
+!.env.example
+
+# логи и редакторы
+npm-debug.log*
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
