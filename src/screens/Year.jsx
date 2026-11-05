@@ -2,7 +2,7 @@ import { memo, useLayoutEffect, useMemo, useRef } from 'react'
 import { addDays, DAYS_WORDS, formatDayMonth, plural } from '../lib/dates.js'
 import { colorVar, dayStatus, earliestYear } from '../lib/habits.js'
 import { noMouseFocus } from '../lib/noMouseFocus.js'
-import { yearLayout } from '../lib/yearGrid.js'
+import { MAX_YEAR, yearLayout } from '../lib/yearGrid.js'
 import StarterCard from '../components/StarterCard.jsx'
 
 const STATUS_TEXT = {
@@ -91,12 +91,13 @@ const YearCard = memo(function YearCard({ habit, days, start, today, layout, onT
 
 export default function Year({ year, onYear, today, infos, onToggle, onStarter }) {
   const layout = useMemo(() => yearLayout(year), [year])
-  // Назад — не раньше min(самый ранний год из данных, текущий − 1), вперёд — до текущего + 1.
+  // Назад — не раньше min(самый ранний год из данных, текущий − 1), вперёд — до MAX_YEAR включительно
+  // (но текущий год доступен всегда, даже если MAX_YEAR уже прошёл).
   // Для лет без данных сетка просто серая, счётчики 0.
   const currentYear = Number(today.slice(0, 4))
   const dataYear = useMemo(() => earliestYear(infos, today), [infos, today])
   const minYear = Math.min(dataYear, currentYear - 1)
-  const maxYear = currentYear + 1
+  const maxYear = Math.max(MAX_YEAR, currentYear)
 
   return (
     <section className="screen s-year">
