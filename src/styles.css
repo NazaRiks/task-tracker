@@ -180,8 +180,8 @@ button.cell.future { cursor: default; }
 
 /* ---------- статистика ---------- */
 .seg { display: inline-flex; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
-.seg span { padding: 6px 14px; border-radius: 8px; font-size: 14px; font-weight: 500; color: var(--muted); cursor: pointer; }
-.seg span.on { background: var(--surface-2); color: var(--fg); }
+.seg button { padding: 6px 14px; border-radius: 8px; font-size: 14px; font-weight: 500; color: var(--muted); cursor: pointer; border: 0; background: transparent; }
+.seg button.on { background: var(--surface-2); color: var(--fg); }
 .period { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .period .label { font-weight: 600; min-width: 130px; text-align: center; }
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }

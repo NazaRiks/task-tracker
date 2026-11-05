@@ -1,6 +1,6 @@
 import { memo, useLayoutEffect, useMemo, useRef } from 'react'
 import { addDays, DAYS_WORDS, formatDayMonth, plural } from '../lib/dates.js'
-import { colorVar, dayStatus } from '../lib/habits.js'
+import { colorVar, dayStatus, earliestYear } from '../lib/habits.js'
 import { noMouseFocus } from '../lib/noMouseFocus.js'
 import { yearLayout } from '../lib/yearGrid.js'
 import StarterCard from '../components/StarterCard.jsx'
@@ -11,16 +11,6 @@ const STATUS_TEXT = {
   pending: 'не отмечено',
   none: 'до старта',
   future: 'ещё не наступил',
-}
-
-// Самый ранний год среди start_date задач и отметок (не позже текущего).
-export function earliestYear(infos, today) {
-  let min = today
-  for (const { habit, days } of infos) {
-    if (habit.start_date < min) min = habit.start_date
-    for (const d of days) if (d < min) min = d
-  }
-  return Number(min.slice(0, 4))
 }
 
 function startText(start, year) {

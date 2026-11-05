@@ -10,6 +10,7 @@ import Toast from './components/Toast.jsx'
 import Today from './screens/Today.jsx'
 import Habits from './screens/Habits.jsx'
 import Year from './screens/Year.jsx'
+import Stats from './screens/Stats.jsx'
 
 const EMPTY = new Set()
 
@@ -47,6 +48,7 @@ function Main({ session }) {
 
   const today = useToday()
   const [year, setYear] = useState(() => Number(today.slice(0, 4)))
+  const [period, setPeriod] = useState(() => ({ kind: 'month', anchor: today }))
   const data = useTrackerData(setNotice)
   const { habits, checkins, toggle: toggleCheckin } = data
 
@@ -107,7 +109,11 @@ function Main({ session }) {
         onStarter={addStarter}
       />
     )
-  } else if (tab === 'habits') {
+  } else if (tab === 'stats') {
+    content = (
+      <Stats period={period} onPeriod={setPeriod} today={today} infos={infos} onStarter={addStarter} />
+    )
+  } else {
     content = (
       <Habits
         habits={habits}
@@ -120,12 +126,6 @@ function Main({ session }) {
         onMove={data.moveHabit}
         onDelete={data.deleteHabit}
       />
-    )
-  } else {
-    content = (
-      <section className="screen">
-        <p className="meta">Раздел появится на следующих этапах.</p>
-      </section>
     )
   }
 

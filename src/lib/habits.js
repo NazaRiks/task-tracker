@@ -76,3 +76,13 @@ export function habitInfo(habit, days, today) {
     best: bestStreak(days),
   }
 }
+
+// Самый ранний год среди start_date задач и отметок (не позже текущего) — граница листания назад.
+export function earliestYear(infos, today) {
+  let min = today
+  for (const { habit, days } of infos) {
+    if (habit.start_date < min) min = habit.start_date
+    for (const d of days) if (d < min) min = d
+  }
+  return Number(min.slice(0, 4))
+}
