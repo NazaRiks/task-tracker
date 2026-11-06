@@ -1,0 +1,6 @@
+# Белый список: в образ попадает только перечисленное, поэтому .env и прочие секреты не утекут.
+*
+!backend/build.sbt
+!backend/project/build.properties
+!backend/project/plugins.sbt
+!backend/src

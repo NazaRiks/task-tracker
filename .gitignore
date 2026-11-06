@@ -3,6 +3,14 @@ dist
 dist-ssr
 *.local
 
+# sbt и инструменты Scala
+target/
+.bsp/
+.metals/
+.bloop/
+.scala-build/
+metals.sbt
+
 # секреты
 .env
 .env.*
