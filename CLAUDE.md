@@ -107,6 +107,8 @@ CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' da
 - **Новые защищённые маршруты** подключать только через `AuthGuard.protect`: пользователь берётся из сессии, забыть проверку нельзя.
 - **`/api/health` использует `timeoutAndForget`**, а Hikari — `connectionTimeout` 5 секунд: JDBC-вызов нельзя отменить, и обычный `timeout` ждал бы его завершения.
 
+- **`shutdownTimeout` Ember 5 секунд:** по умолчанию сервер ждёт keep-alive соединения 30 секунд, а Docker через 10 секунд присылает SIGKILL, и ресурсы не закрылись бы по порядку.
+
 Локально JDK и sbt не установлены, поэтому sbt запускается в контейнере:
 
 ```

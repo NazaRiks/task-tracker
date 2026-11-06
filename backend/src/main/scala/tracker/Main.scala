@@ -16,6 +16,7 @@ object Main extends IOApp.Simple:
 
   private val SessionCleanupInterval = 1.hour
   private val LimiterPruneInterval = 5.minutes
+  private val ShutdownTimeout = 5.seconds
 
   /** Повторяет задачу с паузой. Сбой записывается в лог и не останавливает следующие запуски. */
   private def repeatEvery(interval: FiniteDuration, name: String)(task: IO[Unit]): IO[Unit] =
@@ -51,6 +52,9 @@ object Main extends IOApp.Simple:
         .withHost(config.http.host)
         .withPort(config.http.port)
         .withHttpApp(app)
+        // По умолчанию Ember до 30 секунд ждёт закрытия keep-alive соединений браузеров, а Docker
+        // через 10 секунд убивает процесс, и ресурсы не успели бы закрыться по порядку.
+        .withShutdownTimeout(ShutdownTimeout)
         .build
       _ <- Resource.eval(logger.info(s"Сервер запущен: ${server.baseUri}"))
     yield ()
