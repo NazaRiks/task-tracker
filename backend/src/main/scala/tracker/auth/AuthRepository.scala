@@ -6,7 +6,7 @@ import doobie.implicits.*
 import doobie.postgres.implicits.*
 
 import java.util.UUID
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.*
 
 final case class User(id: UUID, email: String) derives Read
 
@@ -54,12 +54,24 @@ object AuthRepository:
       WHERE s.token_hash = $tokenHash AND s.expires_at > now()
     """.query[SessionRow].option
 
-  def renewSession(tokenHash: Array[Byte], ttl: FiniteDuration): ConnectionIO[Unit] =
+  /** Новый срок не выходит за абсолютный предел. Возвращает, сколько сессии осталось жить: кука не
+    * должна переживать саму сессию. `None`, если сессию только что удалил другой запрос.
+    */
+  def renewSession(
+      tokenHash: Array[Byte],
+      ttl: FiniteDuration,
+      maxLifetime: FiniteDuration
+  ): ConnectionIO[Option[FiniteDuration]] =
     sql"""
       UPDATE sessions
-      SET last_seen_at = now(), expires_at = now() + make_interval(secs => ${ttl.toSeconds.toDouble})
+      SET last_seen_at = now(),
+          expires_at = LEAST(
+            now() + make_interval(secs => ${ttl.toSeconds.toDouble}),
+            created_at + make_interval(secs => ${maxLifetime.toSeconds.toDouble})
+          )
       WHERE token_hash = $tokenHash
-    """.update.run.void
+      RETURNING ceil(extract(epoch FROM expires_at - now()))::bigint
+    """.query[Long].option.map(_.map(_.seconds))
 
   def deleteSession(tokenHash: Array[Byte]): ConnectionIO[Unit] =
     sql"DELETE FROM sessions WHERE token_hash = $tokenHash".update.run.void

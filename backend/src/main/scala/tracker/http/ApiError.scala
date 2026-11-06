@@ -16,3 +16,11 @@ object ApiError:
         )
       )
     )
+
+  /** Один и тот же ответ для чужой задачи, несуществующей задачи и неизвестного адреса: по нему
+    * нельзя понять, существует ли объект.
+    */
+  val notFound: IO[Response[IO]] = response(Status.NotFound, "not_found", "Не найдено")
+
+  def validation(message: String): IO[Response[IO]] =
+    response(Status.BadRequest, "validation_failed", message)

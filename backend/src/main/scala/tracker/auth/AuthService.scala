@@ -14,7 +14,14 @@ final case class Credentials(email: String, password: String):
 
 final case class NewSession(user: User, token: SessionToken)
 
-final case class Authenticated(user: User, token: SessionToken, renewed: Boolean)
+/** @param renewedFor
+  *   если при этом запросе сессия продлена — на сколько; столько же должна жить кука
+  */
+final case class Authenticated(
+    user: User,
+    token: SessionToken,
+    renewedFor: Option[FiniteDuration]
+)
 
 enum RegisterError:
   case Invalid(message: String)
@@ -23,19 +30,24 @@ enum RegisterError:
 object AuthService:
   val SessionTtl: FiniteDuration = 30.days
 
+  /** Украденная сессия не должна жить вечно, даже если ею постоянно пользуются. То же значение
+    * стоит в ограничении `sessions_absolute_lifetime` (миграция V4).
+    */
+  val SessionMaxLifetime: FiniteDuration = 90.days
+
   /** Реже база не обновляется: чтение сессии на каждый запрос не становится записью. */
   val RenewAfter: FiniteDuration = 1.hour
 
 /** Хеширование всегда выполняется вне транзакции: Argon2 работает десятки миллисекунд, и всё это
   * время соединение из пула было бы занято.
   */
-final class AuthService(xa: Transactor[IO], passwords: Passwords):
+final class AuthService(xa: Transactor[IO], passwords: Passwords, passwordPolicy: PasswordPolicy):
   import AuthService.*
 
   def register(credentials: Credentials): IO[Either[RegisterError, NewSession]] =
     val validated = for
       email <- Email.parse(credentials.email)
-      password <- PasswordPolicy.validate(credentials.password)
+      password <- passwordPolicy.validate(credentials.password)
     yield (email, password)
 
     validated match
@@ -77,7 +89,8 @@ final class AuthService(xa: Transactor[IO], passwords: Passwords):
       _ <- AuthRepository.insertSession(token.hash, user.id, SessionTtl).transact(xa)
     yield NewSession(user, token)
 
-  /** Скользящее продление: запись в базу не чаще раза в `RenewAfter`. */
+  /** Скользящее продление: запись в базу не чаще раза в `RenewAfter` и не дальше абсолютного срока.
+    */
   def authenticate(token: SessionToken): IO[Option[Authenticated]] =
     val query = AuthRepository.findSession(token.hash, RenewAfter).flatMap {
       case None      => None.pure[doobie.ConnectionIO]
@@ -85,9 +98,9 @@ final class AuthService(xa: Transactor[IO], passwords: Passwords):
         val user = User(row.id, row.email)
         if row.needsRenewal then
           AuthRepository
-            .renewSession(token.hash, SessionTtl)
-            .as(Some(Authenticated(user, token, renewed = true)))
-        else Some(Authenticated(user, token, renewed = false)).pure[doobie.ConnectionIO]
+            .renewSession(token.hash, SessionTtl, SessionMaxLifetime)
+            .map(_.map(remaining => Authenticated(user, token, Some(remaining))))
+        else Some(Authenticated(user, token, renewedFor = None)).pure[doobie.ConnectionIO]
     }
     query.transact(xa)
 

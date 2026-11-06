@@ -29,9 +29,9 @@ Scala 3 (LTS), sbt, Cats Effect 3, http4s (Ember), Circe, Doobie + HikariCP, Pos
 ## Аутентификация
 
 - `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/logout-all`, `GET /api/auth/me`.
-- Email: trim + lowercase, проверка формата, до 254 символов. Пароль: 10–128 символов. Хеш Argon2id с параметрами OWASP (m=19 MiB, t=2, p=1), параметры в одном месте.
+- Email: trim + lowercase, проверка формата, до 254 символов. Пароль: 10–128 символов, не из локального списка частых паролей (`security/common-passwords.txt`, только при регистрации). Хеш Argon2id с параметрами OWASP (m=19 MiB, t=2, p=1), параметры в одном месте.
 - Логин: одна общая ошибка «Неверный email или пароль». Если пользователя нет — всё равно проверять пароль против фиктивного хеша, чтобы время ответа не выдавало, существует ли email.
-- Сессия: 32 байта из SecureRandom, base64url, в БД только SHA-256. Кука HttpOnly, Secure (флаг настраивается для localhost), SameSite=Lax, Path=/, срок 30 дней со скользящим продлением; last_seen_at обновлять не чаще раза в час (не писать в БД на каждый запрос). При логине всегда новая сессия. Просроченные сессии чистить периодически.
+- Сессия: 32 байта из SecureRandom, base64url, в БД только SHA-256. Кука HttpOnly, Secure (флаг настраивается для localhost), SameSite=Lax, Path=/, срок 30 дней со скользящим продлением; last_seen_at обновлять не чаще раза в час (не писать в БД на каждый запрос). При логине всегда новая сессия. Просроченные сессии чистить периодически. Абсолютный срок: не дольше 90 дней от created_at, даже при постоянном продлении.
 - CSRF: для всех изменяющих запросов требовать `Content-Type: application/json` и проверять заголовок Origin против настроенного адреса сайта (иначе 403).
 - Защита от перебора: лимиты на login (по IP+email и по IP) и register (по IP), ответ 429 с Retry-After. In-memory (Ref) — ограничение одного инстанса задокументировать. IP брать из соединения; X-Forwarded-For учитывать только если включено в конфиге.
 
@@ -39,7 +39,7 @@ Scala 3 (LTS), sbt, Cats Effect 3, http4s (Ember), Circe, Doobie + HikariCP, Pos
 
 - `POSTGRES_USER` в официальном образе — суперпользователь, приложение под ним не работает.
 - `tracker_owner` — владелец схемы, под ним только Flyway. `tracker_app` — LOGIN, только CONNECT, USAGE на схему, SELECT/INSERT/UPDATE/DELETE на таблицы и права на последовательности; без CREATE, без TRUNCATE, без владения таблицами. Права для будущих таблиц через ALTER DEFAULT PRIVILEGES.
-- Роли создаёт init-скрипт `backend/db-init/01-roles.sh` (docker-entrypoint-initdb.d), пароли из `.env`. Приложение получает отдельно `DB_MIGRATION_USER/PASSWORD` (только для Flyway при старте) и `DB_USER/PASSWORD` (для пула).
+- Роли создаёт init-скрипт `backend/db-init/01-roles.sh` (docker-entrypoint-initdb.d), пароли из `.env`. Миграции выполняет разовый сервис `migrate` (тот же образ, аргумент `migrate`, `restart: "no"`), только он получает `DB_MIGRATION_USER/PASSWORD`. Сервис `app` получает только `DB_USER/PASSWORD` и стартует после `service_completed_successfully`. Пароля владельца у него быть не должно.
 - Тест: под `tracker_app` нельзя выполнить DROP TABLE / CREATE TABLE / TRUNCATE. Решения описаны в `SECURITY.md`, файл дополняется по этапам.
 
 ## API задач и отметок
@@ -88,9 +88,8 @@ CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' da
 
 Подробный план по оставшимся этапам:
 
-- **Этап 3.** Миграция habits/checkins, репозитории на doobie, маршруты под `AuthGuard.protect`, SQL серий (gaps-and-islands), LogHandler-счётчик для тестов N+1, дополнить `SECURITY.md` (IDOR).
-- **Этап 4.** API-клиент вместо `src/lib/supabase.js` и `useTrackerData`, переключатель «Вход / Регистрация», загрузка отметок диапазонами, серии с сервера, @fontsource. Удаляются supabase-js, `supabase/`, `frontend/scripts/check-env.mjs`, `frontend/.env.example`, экран `NotConfigured`.
-- **Этап 5.** Стадия сборки фронта в Dockerfile, раздача статики и SPA-fallback (пересмотреть `base: './'`), README, SECURITY.md, финальная проверка.
+- **Этап 4.** **Фронт обязан слать `Content-Type: application/json` во ВСЕХ POST/PUT/PATCH/DELETE, даже без тела (`PUT`/`DELETE` отметки, `DELETE` задачи, `logout`), иначе CSRF-проверка вернёт 403.** Dev-режим бэкенда: сначала `sbt "run migrate"` с `DB_MIGRATION_*`, потом `sbt run` с `DB_USER/PASSWORD`. API-клиент вместо `src/lib/supabase.js` и `useTrackerData`, переключатель «Вход / Регистрация», загрузка отметок диапазонами, серии с сервера, @fontsource. Удаляются supabase-js, `supabase/`, `frontend/scripts/check-env.mjs`, `frontend/.env.example`, экран `NotConfigured`.
+- **Этап 5.** Стадия сборки фронта в Dockerfile, раздача статики и SPA-fallback (пересмотреть `base: './'`). Статика подключается после `Api.routes` в цепочке `<+>`, неизвестный `/api/*` не должен попадать в SPA-fallback: там нужен прежний JSON 404. Дальше README, SECURITY.md, финальная проверка.
 
 Решения и причины:
 
@@ -107,6 +106,11 @@ CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' da
 - **Новые защищённые маршруты** подключать только через `AuthGuard.protect`: пользователь берётся из сессии, забыть проверку нельзя.
 - **`/api/health` использует `timeoutAndForget`**, а Hikari — `connectionTimeout` 5 секунд: JDBC-вызов нельзя отменить, и обычный `timeout` ждал бы его завершения.
 
+- **Форма API для этапа 4.** Поля задачи: `id, name, color, position, start_date, created_at`, в `GET /api/habits` ещё `streak` и `best` (массив в порядке `position`). Позицию считает сервер. `PATCH` возвращает задачу без серий. `POST /api/habits/starter` принимает `{start_date}` и отвечает 409, если задачи уже есть.
+- **Отметка определяет успех не по числу вставленных строк, а по CTE `owned`:** при `ON CONFLICT DO NOTHING` повторный идемпотентный `PUT` тоже вставляет 0 строк, и правило «0 строк → 404» из ТЗ сломало бы его.
+- **`start_date` проверяется до UTC + 366 дней, а не 365:** правило продукта — локальная дата + 365, а она бывает на день впереди UTC. Иначе в Словении между полуночью и 2–3 часами ночи самая поздняя дата из поля ввода получала бы отказ.
+- **В блоклисте пароли от 10 символов, а не общий топ-10 000:** 88% самых частых паролей короче 10 символов и уже отсекаются проверкой длины.
+- **`build` только у сервиса `app`, у `migrate` — `pull_policy: never`:** два `build` с одним тегом падают на чистой машине с `image already exists`. На собранном образе этого не видно, поэтому проверять нужно без него.
 - **`shutdownTimeout` Ember 5 секунд:** по умолчанию сервер ждёт keep-alive соединения 30 секунд, а Docker через 10 секунд присылает SIGKILL, и ресурсы не закрылись бы по порядку.
 
 Локально JDK и sbt не установлены, поэтому sbt запускается в контейнере:

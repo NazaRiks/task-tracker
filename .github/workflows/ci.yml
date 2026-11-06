@@ -29,6 +29,20 @@ jobs:
       - name: Check formatting and run tests
         run: sbt "scalafmtCheckAll; scalafmtSbtCheck; test"
 
+      # Пароль владельца схемы получает только разовый сервис migrate, сервер его не знает.
+      - name: Check that the owner role is not passed to the app service
+        working-directory: .
+        env:
+          POSTGRES_PASSWORD: ci
+          DB_MIGRATION_PASSWORD: ci
+          DB_PASSWORD: ci
+          SITE_ORIGIN: http://localhost:8080
+        run: |
+          docker compose config --format json > compose.json
+          jq -e '.services.app.environment | (has("DB_MIGRATION_USER") or has("DB_MIGRATION_PASSWORD")) | not' compose.json
+          jq -e '.services.migrate.environment | has("DB_MIGRATION_PASSWORD") and (has("DB_PASSWORD") | not)' compose.json
+          jq -e '.services.app.depends_on.migrate.condition == "service_completed_successfully"' compose.json
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

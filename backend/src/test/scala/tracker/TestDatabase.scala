@@ -1,11 +1,13 @@
 package tracker
 
 import cats.effect.{IO, Resource}
+import cats.syntax.all.*
 import ciris.Secret
 import doobie.Transactor
+import doobie.util.log.LogHandler
 import org.testcontainers.postgresql.PostgreSQLContainer
 import org.testcontainers.utility.{DockerImageName, MountableFile}
-import tracker.config.{DbConfig, DbCredentials}
+import tracker.config.{DbConfig, DbCredentials, MigrationConfig}
 import tracker.db.Database
 
 /** Настоящий Postgres той же версии, что и в docker-compose.yml, с тем же init-скриптом ролей.
@@ -33,10 +35,13 @@ object TestDatabase:
   val config: IO[DbConfig] = IO.blocking {
     DbConfig(
       url = container.getJdbcUrl,
-      migration = DbCredentials("tracker_owner", Secret(OwnerPassword)),
       app = DbCredentials("tracker_app", Secret(AppPassword)),
       poolSize = 4
     )
+  }
+
+  val migrationConfig: IO[MigrationConfig] = IO.blocking {
+    MigrationConfig(container.getJdbcUrl, DbCredentials("tracker_owner", Secret(OwnerPassword)))
   }
 
   /** Суперпользователь контейнера: только чтобы проверить, что приложение откажется под ним
@@ -46,6 +51,9 @@ object TestDatabase:
     DbCredentials(container.getUsername, Secret(container.getPassword))
   }
 
-  /** Пул роли приложения. */
-  val transactor: Resource[IO, Transactor[IO]] =
-    Resource.eval(config).flatMap(Database.transactor)
+  /** Как при запуске через compose: сначала миграции под владельцем, потом пул роли приложения. */
+  def transactorWith(logHandler: Option[LogHandler[IO]]): Resource[IO, Transactor[IO]] =
+    Resource.eval(migrationConfig.flatMap(Database.migrate)) *>
+      Resource.eval(config).flatMap(Database.transactor(_, logHandler))
+
+  val transactor: Resource[IO, Transactor[IO]] = transactorWith(None)

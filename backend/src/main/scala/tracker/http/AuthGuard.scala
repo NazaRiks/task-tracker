@@ -7,6 +7,10 @@ import tracker.auth.{AuthService, Authenticated}
 
 /** Защищает группу маршрутов целиком: обработчик получает пользователя только из сессии, поэтому
   * забыть проверку или взять `user_id` из запроса нельзя.
+  *
+  * Без сессии ответ 401 приходит на ЛЮБОЙ запрос, дошедший до защищённых маршрутов, и следующие
+  * маршруты в цепочке `<+>` уже не вызываются. Поэтому монтировать их можно только под конкретным
+  * префиксом и только через `Api.routes`, иначе они перекроют публичные маршруты и статику.
   */
 final class AuthGuard(auth: AuthService, cookies: SessionCookies):
   private val unauthorized: IO[Response[IO]] =
@@ -24,9 +28,10 @@ final class AuthGuard(auth: AuthService, cookies: SessionCookies):
           routes(ContextRequest(authenticated, request)).map { response =>
             // База продлила сессию, значит продлеваем и куку в браузере. Если обработчик сам
             // поставил куку (выход), её не перезаписываем.
-            if authenticated.renewed && response.cookies.isEmpty then
-              response.addCookie(cookies.issue(authenticated.token))
-            else response
+            authenticated.renewedFor match
+              case Some(ttl) if response.cookies.isEmpty =>
+                response.addCookie(cookies.issue(authenticated.token, ttl))
+              case _ => response
           }
       }
     }

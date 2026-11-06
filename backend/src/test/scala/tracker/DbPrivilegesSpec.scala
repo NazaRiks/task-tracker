@@ -38,9 +38,13 @@ class DbPrivilegesSpec extends munit.CatsEffectSuite:
   List(
     "DROP TABLE users",
     "DROP TABLE sessions CASCADE",
+    "DROP TABLE habits CASCADE",
+    "DROP TABLE checkins",
     "CREATE TABLE evil (id int)",
     "TRUNCATE users",
     "TRUNCATE sessions",
+    "TRUNCATE habits CASCADE",
+    "TRUNCATE checkins",
     "TRUNCATE users CASCADE",
     "ALTER TABLE users ADD COLUMN evil int",
     "CREATE TEMP TABLE evil (id int)",
@@ -133,6 +137,37 @@ class DbPrivilegesSpec extends munit.CatsEffectSuite:
   test("приложение отказывается стартовать, если пул работает под владельцем схемы") {
     for
       config <- TestDatabase.config
-      result <- Database.transactor(config.copy(app = config.migration)).use_.attempt
+      migration <- TestDatabase.migrationConfig
+      result <- Database.transactor(config.copy(app = migration.owner)).use_.attempt
     yield assert(result.left.exists(_.getMessage.contains("CREATE")), s"Получено: $result")
+  }
+
+  test("миграции идемпотентны: повторный запуск ничего не меняет") {
+    TestDatabase.migrationConfig.flatMap(Database.migrate).attempt.map(r => assert(r.isRight, r))
+  }
+
+  test("неверный пароль владельца: режим migrate завершается ошибкой") {
+    for
+      migration <- TestDatabase.migrationConfig
+      wrong = migration.copy(owner = migration.owner.copy(password = ciris.Secret("wrong")))
+      result <- Database.migrate(wrong).attempt
+    yield assert(result.isLeft)
+  }
+
+  test("сервер не стартует на базе без миграций и объясняет почему") {
+    val database = s"empty_${java.util.UUID.randomUUID.toString.replace("-", "")}"
+    def createDatabase(url: String, credentials: tracker.config.DbCredentials): IO[Unit] =
+      IO.blocking {
+        val connection = java.sql.DriverManager
+          .getConnection(url, credentials.user, credentials.password.value)
+        try connection.createStatement().execute(s"CREATE DATABASE $database")
+        finally connection.close()
+      }.void
+    for
+      config <- TestDatabase.config
+      superuser <- TestDatabase.superuser
+      _ <- createDatabase(config.url, superuser)
+      empty = config.copy(url = config.url.replace("/tracker", s"/$database"))
+      result <- Database.transactor(empty).use_.attempt
+    yield assert(result.left.exists(_.getMessage.contains("миграции")), s"Получено: $result")
   }

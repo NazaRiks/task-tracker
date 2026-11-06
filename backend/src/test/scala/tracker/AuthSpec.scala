@@ -18,6 +18,7 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.testing.TestingLogger
 import tracker.auth.*
 import tracker.config.SecurityConfig
+import tracker.habits.{HabitRules, HabitService}
 import tracker.http.{Api, ServerMiddleware}
 
 import java.util.UUID
@@ -50,9 +51,18 @@ class AuthSpec extends munit.CatsEffectSuite:
   )(using Logger[IO]): IO[HttpApp[IO]] =
     for
       hashing <- passwords
+      policy <- PasswordPolicy.load
       limiter <- RateLimiter.create()
-      auth = AuthService(xa(), hashing)
-    yield Api.httpApp(auth, limiter, limits, security, IO.unit)
+      auth = AuthService(xa(), hashing, policy)
+    yield Api.httpApp(
+      auth,
+      HabitService(xa()),
+      limiter,
+      limits,
+      security,
+      IO.unit,
+      HabitRules.utcToday
+    )
 
   private given defaultLogger: Logger[IO] = TestingLogger.impl[IO]()
 
@@ -232,7 +242,8 @@ class AuthSpec extends munit.CatsEffectSuite:
   private def spyPasswords(calls: Ref[IO, List[String]]): IO[Passwords] =
     Passwords.create.map { real =>
       new Passwords:
-        def hash(password: String): IO[String] = real.hash(password)
+        def hash(password: String): IO[String] =
+          calls.update("hash" :: _) *> real.hash(password)
         def verify(password: String, hash: String): IO[Boolean] =
           calls.update("verify" :: _) *> real.verify(password, hash)
         def verifyAgainstDummy(password: String): IO[Unit] =
@@ -276,7 +287,8 @@ class AuthSpec extends munit.CatsEffectSuite:
     "email без @" -> credentials("no-at-sign.example.com"),
     "email без домена" -> credentials("user@localhost"),
     "email с пробелом внутри" -> credentials("us er@example.com"),
-    "email длиннее 254 символов" -> credentials(("x" * 250) + "@example.com")
+    "email длиннее 254 символов" -> credentials(("x" * 250) + "@example.com"),
+    "email с нулевым символом" -> credentials("nul\u0000@example.com")
   )
 
   invalidRegistrations.foreach { (name, body) =>
@@ -295,8 +307,10 @@ class AuthSpec extends munit.CatsEffectSuite:
   test("пароль на границах допустимой длины принимается, эмодзи считается за один символ") {
     for
       app <- appWith()
-      min <- app.run(post("/api/auth/register", credentials(newEmail, "x" * 10)))
-      max <- app.run(post("/api/auth/register", credentials(newEmail, "x" * 128)))
+      min <- app.run(post("/api/auth/register", credentials(newEmail, "k7Qm2xPz9w")))
+      max <- app.run(
+        post("/api/auth/register", credentials(newEmail, ("k7Qm2xPz9w" * 13).take(128)))
+      )
       emoji <- app.run(post("/api/auth/register", credentials(newEmail, "😀" * 128)))
     yield
       assertEquals(min.status, Status.Created)
@@ -317,7 +331,7 @@ class AuthSpec extends munit.CatsEffectSuite:
         WHERE token_hash = ${sha256(expired)}
       """.update.run.transact(xa())
       expiredMe <- app.run(get("/api/auth/me", Some(expired)))
-      deleted <- AuthService(xa(), null).deleteExpiredSessions
+      deleted <- AuthService(xa(), null, null).deleteExpiredSessions
       left <- sql"SELECT count(*) FROM sessions WHERE token_hash = ${sha256(expired)}"
         .query[Int]
         .unique
@@ -455,6 +469,214 @@ class AuthSpec extends munit.CatsEffectSuite:
     yield
       assertEquals(response.status, Status.Forbidden)
       assert(response.cookies.isEmpty)
+  }
+
+  // ---------- Абсолютный срок сессии ----------
+
+  /** Сдвигает всю историю сессии в прошлое: как будто прошло столько дней. */
+  private def age(token: String, days: Int): IO[Unit] =
+    sql"""
+      UPDATE sessions
+      SET created_at = created_at - make_interval(hours => ${days * 24}),
+          last_seen_at = last_seen_at - make_interval(hours => ${days * 24}),
+          expires_at = expires_at - make_interval(hours => ${days * 24})
+      WHERE token_hash = ${sha256(token)}
+    """.update.run.transact(xa()).void
+
+  test("постоянное продление не продлевает сессию дольше 90 дней от создания") {
+    for
+      app <- appWith()
+      token <- register(app, newEmail)
+      _ <- age(token, 29)
+      day29 <- app.run(get("/api/auth/me", Some(token)))
+      _ <- age(token, 29)
+      day58 <- app.run(get("/api/auth/me", Some(token)))
+      _ <- age(token, 29)
+      day87 <- app.run(get("/api/auth/me", Some(token)))
+      _ <- age(token, 29)
+      day116 <- app.run(get("/api/auth/me", Some(token)))
+    yield
+      assertEquals(day29.status, Status.Ok)
+      assertEquals(sessionCookie(day29).maxAge, Some(30L * 24 * 60 * 60))
+      assertEquals(day58.status, Status.Ok)
+      assertEquals(sessionCookie(day58).maxAge, Some(30L * 24 * 60 * 60))
+      assertEquals(day87.status, Status.Ok)
+      // Осталось 3 дня: кука не должна жить дольше самой сессии.
+      val remaining = sessionCookie(day87).maxAge.getOrElse(fail("Нет Max-Age"))
+      assert(remaining <= 3L * 24 * 60 * 60, s"Max-Age: $remaining")
+      assert(remaining > 3L * 24 * 60 * 60 - 60, s"Max-Age: $remaining")
+      assertEquals(day116.status, Status.Unauthorized)
+  }
+
+  test("ограничение в базе не даёт поставить срок дальше 90 дней от создания") {
+    for
+      app <- appWith()
+      token <- register(app, newEmail)
+      result <- sql"""
+        UPDATE sessions SET expires_at = created_at + interval '2161 hours'
+        WHERE token_hash = ${sha256(token)}
+      """.update.run.transact(xa()).attempt
+    yield result match
+      case Left(error: java.sql.SQLException) => assertEquals(error.getSQLState, "23514")
+      case other => fail(s"Ожидалось нарушение CHECK, получено: $other")
+  }
+
+  // ---------- Блоклист паролей ----------
+
+  List(
+    "точное совпадение" -> "qwertyuiop",
+    "другой регистр" -> "PassWord123",
+    "пробелы по краям" -> "  1234567890  "
+  ).foreach { (name, password) =>
+    test(s"частый пароль отклоняется при регистрации: $name") {
+      for
+        calls <- Ref[IO].of(List.empty[String])
+        app <- appWith(passwords = spyPasswords(calls))
+        response <- app.run(post("/api/auth/register", credentials(newEmail, password)))
+        code <- errorCode(response)
+        recorded <- calls.get
+      yield
+        assertEquals(response.status, Status.BadRequest)
+        assertEquals(code, "validation_failed")
+        assert(response.cookies.isEmpty)
+        assertEquals(recorded, Nil, "Отклонённый пароль не должен тратить Argon2")
+    }
+  }
+
+  test("редкий пароль принимается, а файл блоклиста нужного размера и формата") {
+    for
+      app <- appWith()
+      policy <- PasswordPolicy.load
+      accepted <- app.run(post("/api/auth/register", credentials(newEmail, "k7Qm2xPz9w-tracker")))
+      lines <- IO.blocking {
+        val source =
+          scala.io.Source.fromResource("security/common-passwords.txt", getClass.getClassLoader)
+        try source.getLines().toList
+        finally source.close()
+      }
+    yield
+      assertEquals(accepted.status, Status.Created)
+      assertEquals(lines.length, 10000)
+      assertEquals(lines.distinct.length, lines.length)
+      assert(lines.forall(_.length >= PasswordPolicy.MinLength), "Короткие строки не нужны")
+      assert(lines.forall(line => line == line.toLowerCase(java.util.Locale.ROOT)))
+      assert(lines.forall(policy.isCommon))
+  }
+
+  test("блоклист не мешает входу: проверка действует только при создании пароля") {
+    val email = newEmail
+    for
+      hashing <- Passwords.create
+      hash <- hashing.hash("qwertyuiop")
+      _ <- sql"INSERT INTO users (email, password_hash) VALUES ($email::citext, $hash)".update.run
+        .transact(xa())
+      app <- appWith()
+      login <- app.run(post("/api/auth/login", credentials(email, "qwertyuiop")))
+    yield assertEquals(login.status, Status.Ok)
+  }
+
+  // Как текст JSON: при кодировании строки в UTF-8 суррогат заменился бы на «?» ещё в тесте.
+  private val surrogateEmail =
+    """{"email": "bad\ud800@example.com", "password": "correct horse battery"}"""
+
+  private def rawPost(path: String, body: String): Request[IO] =
+    Request[IO](Method.POST, Uri.unsafeFromString(path))
+      .withEntity(body)
+      .withContentType(`Content-Type`(MediaType.application.json))
+      .putHeaders(Header.Raw(ci"Origin", Site))
+
+  test("регистрация с непарным суррогатом в email: 400, а не 500") {
+    for
+      app <- appWith()
+      response <- app.run(rawPost("/api/auth/register", surrogateEmail))
+    yield assertEquals(response.status, Status.BadRequest)
+  }
+
+  test("некорректный email с нулевым символом при входе: обычный отказ, а не 500") {
+    for
+      app <- appWith()
+      nul <- app.run(post("/api/auth/login", credentials("nul\u0000@example.com")))
+      surrogate <- app.run(rawPost("/api/auth/login", surrogateEmail))
+    yield
+      assertEquals(nul.status, Status.Unauthorized)
+      assertEquals(surrogate.status, Status.Unauthorized)
+  }
+
+  // ---------- Монтирование защищённых маршрутов ----------
+
+  test("неизвестный /api/... без сессии: 404, а не 401") {
+    for
+      app <- appWith()
+      unknown <- app.run(get("/api/unknown"))
+      code <- errorCode(unknown)
+      similar <- app.run(get("/api/habitsx"))
+      write <- app.run(post("/api/unknown"))
+    yield
+      assertEquals(unknown.status, Status.NotFound)
+      assertEquals(code, "not_found")
+      assertEquals(similar.status, Status.NotFound)
+      assertEquals(write.status, Status.NotFound)
+  }
+
+  test("публичные маршруты работают без сессии, защищённые отвечают 401") {
+    val email = newEmail
+    for
+      app <- appWith()
+      health <- app.run(get("/api/health"))
+      registered <- app.run(post("/api/auth/register", credentials(email)))
+      login <- app.run(post("/api/auth/login", credentials(email)))
+      logout <- app.run(post("/api/auth/logout"))
+      me <- app.run(get("/api/auth/me"))
+      logoutAll <- app.run(post("/api/auth/logout-all"))
+      habits <- app.run(get("/api/habits?today=2026-01-01"))
+      checkins <- app.run(get("/api/checkins?from=2026-01-01&to=2026-01-02"))
+    yield
+      assertEquals(health.status, Status.Ok)
+      assertEquals(registered.status, Status.Created)
+      assertEquals(login.status, Status.Ok)
+      assertEquals(logout.status, Status.NoContent)
+      List(me, logoutAll, habits, checkins).foreach { response =>
+        assertEquals(response.status, Status.Unauthorized)
+      }
+  }
+
+  test("/api/auth: неизвестный адрес без сессии 401 (как раньше), с сессией 404") {
+    for
+      app <- appWith()
+      token <- register(app, newEmail)
+      anonymous <- app.run(get("/api/auth/unknown"))
+      signedIn <- app.run(get("/api/auth/unknown", Some(token)))
+    yield
+      assertEquals(anonymous.status, Status.Unauthorized)
+      assertEquals(signedIn.status, Status.NotFound)
+  }
+
+  test("маршрут после Api.routes (на этапе 5 статика и SPA) доступен без сессии") {
+    val spa = HttpRoutes.of[IO] { case _ => IO.pure(Response[IO](Status.Ok)) }
+    for
+      hashing <- Passwords.create
+      policy <- PasswordPolicy.load
+      limiter <- RateLimiter.create()
+      auth = AuthService(xa(), hashing, policy)
+      routes = Api.routes(
+        auth,
+        HabitService(xa()),
+        limiter,
+        generous,
+        strict,
+        IO.unit,
+        HabitRules.utcToday
+      )
+      app = (routes <+> spa).orNotFound
+      index <- app.run(get("/index.html"))
+      deep <- app.run(get("/stats/year"))
+      login <- app.run(post("/api/auth/login", credentials(newEmail)))
+      habits <- app.run(get("/api/habits?today=2026-01-01"))
+    yield
+      assertEquals(index.status, Status.Ok)
+      assertEquals(deep.status, Status.Ok)
+      assertEquals(login.status, Status.Unauthorized, "Обработчик login, а не заглушка статики")
+      assertEquals(habits.status, Status.Unauthorized, "Защита не должна уступать статике")
   }
 
   // ---------- Лимиты ----------

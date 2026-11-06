@@ -1,17 +1,22 @@
 package tracker
 
-import cats.effect.{IO, IOApp, Resource}
+import cats.effect.{ExitCode, IO, IOApp, Resource}
 import org.http4s.ember.server.EmberServerBuilder
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import tracker.auth.{AuthService, Passwords, RateLimiter, RateLimits}
-import tracker.config.AppConfig
+import tracker.auth.{AuthService, Passwords, PasswordPolicy, RateLimiter, RateLimits}
+import tracker.config.{AppConfig, MigrationConfig}
 import tracker.db.Database
+import tracker.habits.{HabitRules, HabitService}
 import tracker.http.Api
 
 import scala.concurrent.duration.*
 
-object Main extends IOApp.Simple:
+/** Один образ, два режима. Без аргументов — сервер, он знает только роль приложения. С аргументом
+  * `migrate` — миграции под владельцем схемы и выход. Режимы читают разные переменные окружения,
+  * поэтому пароль владельца не попадает в окружение работающего сервера.
+  */
+object Main extends IOApp:
   private given logger: Logger[IO] = Slf4jLogger.getLogger[IO]
 
   private val SessionCleanupInterval = 1.hour
@@ -32,8 +37,9 @@ object Main extends IOApp.Simple:
       config <- Resource.eval(AppConfig.load)
       xa <- Database.transactor(config.db)
       passwords <- Resource.eval(Passwords.create)
+      passwordPolicy <- Resource.eval(PasswordPolicy.load)
       limiter <- Resource.eval(RateLimiter.create())
-      auth = AuthService(xa, passwords)
+      auth = AuthService(xa, passwords, passwordPolicy)
       _ <- repeatEvery(SessionCleanupInterval, "очистка сессий") {
         auth.deleteExpiredSessions.flatMap(count =>
           logger.info(s"Удалено просроченных сессий: $count")
@@ -42,10 +48,12 @@ object Main extends IOApp.Simple:
       _ <- repeatEvery(LimiterPruneInterval, "очистка лимитов")(limiter.prune).background
       app = Api.httpApp(
         auth,
+        HabitService(xa),
         limiter,
         RateLimits.default,
         config.security,
-        Database.ping(xa)
+        Database.ping(xa),
+        HabitRules.utcToday
       )
       server <- EmberServerBuilder
         .default[IO]
@@ -59,4 +67,14 @@ object Main extends IOApp.Simple:
       _ <- Resource.eval(logger.info(s"Сервер запущен: ${server.baseUri}"))
     yield ()
 
-  val run: IO[Unit] = server.useForever
+  /** Падение миграции даёт ненулевой код выхода, и compose не запускает сервер. */
+  private val migrate: IO[ExitCode] =
+    MigrationConfig.load.flatMap(Database.migrate) *>
+      logger.info("Миграции применены").as(ExitCode.Success)
+
+  def run(args: List[String]): IO[ExitCode] =
+    args match
+      case Nil             => server.useForever
+      case List("migrate") => migrate
+      case _               =>
+        logger.error("Неизвестный режим запуска: допустим только аргумент migrate").as(ExitCode(2))

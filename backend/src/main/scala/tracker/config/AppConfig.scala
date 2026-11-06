@@ -15,13 +15,17 @@ final case class HttpConfig(host: Host, port: Port)
   */
 final case class DbCredentials(user: String, password: Secret[String])
 
-/** Две роли: `migration` (владелец схемы) нужна только Flyway при старте, `app` работает в пуле. */
-final case class DbConfig(
-    url: String,
-    migration: DbCredentials,
-    app: DbCredentials,
-    poolSize: Int
-)
+/** Настройки пула: только роль приложения. Данных владельца схемы здесь нет намеренно. */
+final case class DbConfig(url: String, app: DbCredentials, poolSize: Int)
+
+/** Настройки режима миграций: только владелец схемы. Сервер эти переменные не читает. */
+final case class MigrationConfig(url: String, owner: DbCredentials)
+
+object MigrationConfig:
+  val load: IO[MigrationConfig] = (
+    env("DB_URL"),
+    (env("DB_MIGRATION_USER"), env("DB_MIGRATION_PASSWORD").secret).parMapN(DbCredentials.apply)
+  ).parMapN(MigrationConfig.apply).load[IO]
 
 /** @param siteOrigin
   *   адрес сайта, с которым сверяется заголовок Origin
@@ -53,7 +57,6 @@ object AppConfig:
 
   private val db: ConfigValue[IO, DbConfig] = (
     env("DB_URL"),
-    (env("DB_MIGRATION_USER"), env("DB_MIGRATION_PASSWORD").secret).parMapN(DbCredentials.apply),
     (env("DB_USER"), env("DB_PASSWORD").secret).parMapN(DbCredentials.apply),
     env("DB_POOL_SIZE").as[Int].default(10)
   ).parMapN(DbConfig.apply)

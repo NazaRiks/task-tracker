@@ -4,6 +4,8 @@ import cats.effect.IO
 import org.http4s.{Request, ResponseCookie, SameSite}
 import tracker.auth.{AuthService, SessionToken}
 
+import scala.concurrent.duration.FiniteDuration
+
 /** С флагом Secure используется префикс `__Host-`: браузер примет такую куку только по HTTPS, без
   * Domain и с Path=/, поэтому её нельзя подставить с поддомена.
   */
@@ -21,8 +23,8 @@ final class SessionCookies(secure: Boolean):
       sameSite = Some(SameSite.Lax)
     )
 
-  def issue(token: SessionToken): ResponseCookie =
-    cookie(token.value, AuthService.SessionTtl.toSeconds)
+  def issue(token: SessionToken, ttl: FiniteDuration = AuthService.SessionTtl): ResponseCookie =
+    cookie(token.value, ttl.toSeconds)
 
   val clear: ResponseCookie = cookie("", 0)
 
