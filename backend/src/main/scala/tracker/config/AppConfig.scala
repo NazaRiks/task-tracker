@@ -5,14 +5,39 @@ import cats.syntax.all.*
 import ciris.*
 import com.comcast.ip4s.{Host, Port}
 
+import java.net.URI
+import scala.util.Try
+
 final case class HttpConfig(host: Host, port: Port)
 
 /** Пароль завёрнут в `Secret`: его `toString` не раскрывает значение, поэтому случайно записать
   * конфиг с паролем в лог нельзя.
   */
-final case class DbConfig(url: String, user: String, password: Secret[String], poolSize: Int)
+final case class DbCredentials(user: String, password: Secret[String])
 
-final case class AppConfig(http: HttpConfig, db: DbConfig)
+/** Две роли: `migration` (владелец схемы) нужна только Flyway при старте, `app` работает в пуле. */
+final case class DbConfig(
+    url: String,
+    migration: DbCredentials,
+    app: DbCredentials,
+    poolSize: Int
+)
+
+/** @param siteOrigin
+  *   адрес сайта, с которым сверяется заголовок Origin
+  * @param cookieSecure
+  *   флаг Secure у куки и заголовок HSTS; выключается только для http://localhost
+  * @param trustForwardedFor
+  *   брать IP из X-Forwarded-For; включать только за своим обратным прокси, иначе клиент подделает
+  *   заголовок и обойдёт лимиты
+  */
+final case class SecurityConfig(
+    siteOrigin: String,
+    cookieSecure: Boolean,
+    trustForwardedFor: Boolean
+)
+
+final case class AppConfig(http: HttpConfig, db: DbConfig, security: SecurityConfig)
 
 object AppConfig:
   private given ConfigDecoder[String, Host] =
@@ -28,10 +53,32 @@ object AppConfig:
 
   private val db: ConfigValue[IO, DbConfig] = (
     env("DB_URL"),
-    env("DB_USER"),
-    env("DB_PASSWORD").secret,
+    (env("DB_MIGRATION_USER"), env("DB_MIGRATION_PASSWORD").secret).parMapN(DbCredentials.apply),
+    (env("DB_USER"), env("DB_PASSWORD").secret).parMapN(DbCredentials.apply),
     env("DB_POOL_SIZE").as[Int].default(10)
   ).parMapN(DbConfig.apply)
 
+  /** Origin браузера — это ровно `схема://хост[:порт]`, с адресом с путём сравнение никогда не
+    * пройдёт. Поэтому ошибка в настройке должна быть видна при запуске.
+    */
+  private def isOrigin(value: String): Boolean =
+    Try(new URI(value)).toOption.exists { uri =>
+      Set("http", "https").contains(uri.getScheme) &&
+      uri.getHost != null &&
+      uri.getRawPath.isEmpty &&
+      uri.getRawQuery == null &&
+      uri.getRawFragment == null
+    }
+
+  private val security: ConfigValue[IO, SecurityConfig] = (
+    env("SITE_ORIGIN").as[String].evalMap { value =>
+      if isOrigin(value) then IO.pure(value)
+      else IO.raiseError(new IllegalArgumentException(s"SITE_ORIGIN не похож на Origin: $value"))
+    },
+    // Безопасное значение по умолчанию: без явной настройки кука уходит только по HTTPS.
+    env("COOKIE_SECURE").as[Boolean].default(true),
+    env("TRUST_X_FORWARDED_FOR").as[Boolean].default(false)
+  ).parMapN(SecurityConfig.apply)
+
   /** `parMapN` собирает сразу все ошибки: при запуске видно каждую незаданную переменную. */
-  val load: IO[AppConfig] = (http, db).parMapN(AppConfig.apply).load[IO]
+  val load: IO[AppConfig] = (http, db, security).parMapN(AppConfig.apply).load[IO]

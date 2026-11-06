@@ -35,6 +35,13 @@ Scala 3 (LTS), sbt, Cats Effect 3, http4s (Ember), Circe, Doobie + HikariCP, Pos
 - CSRF: для всех изменяющих запросов требовать `Content-Type: application/json` и проверять заголовок Origin против настроенного адреса сайта (иначе 403).
 - Защита от перебора: лимиты на login (по IP+email и по IP) и register (по IP), ответ 429 с Retry-After. In-memory (Ref) — ограничение одного инстанса задокументировать. IP брать из соединения; X-Forwarded-For учитывать только если включено в конфиге.
 
+## Наименьшие привилегии в БД
+
+- `POSTGRES_USER` в официальном образе — суперпользователь, приложение под ним не работает.
+- `tracker_owner` — владелец схемы, под ним только Flyway. `tracker_app` — LOGIN, только CONNECT, USAGE на схему, SELECT/INSERT/UPDATE/DELETE на таблицы и права на последовательности; без CREATE, без TRUNCATE, без владения таблицами. Права для будущих таблиц через ALTER DEFAULT PRIVILEGES.
+- Роли создаёт init-скрипт `backend/db-init/01-roles.sh` (docker-entrypoint-initdb.d), пароли из `.env`. Приложение получает отдельно `DB_MIGRATION_USER/PASSWORD` (только для Flyway при старте) и `DB_USER/PASSWORD` (для пула).
+- Тест: под `tracker_app` нельзя выполнить DROP TABLE / CREATE TABLE / TRUNCATE. Решения описаны в `SECURITY.md`, файл дополняется по этапам.
+
 ## API задач и отметок
 
 - Все запросы к habits/checkins фильтруются по user_id ИЗ СЕССИИ, никогда из запроса. Чужая или несуществующая задача → 404 (не 403, чтобы не раскрывать существование). UPDATE/DELETE только с `WHERE id = ? AND user_id = ?`.
@@ -81,8 +88,7 @@ CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' da
 
 Подробный план по оставшимся этапам:
 
-- **Этап 2.** Миграция users/sessions. Модули: валидация email и пароля, `Passwords` (Argon2id, параметры в одном месте, фиктивный хеш), `Sessions` (токен, SHA-256, продление, периодическая очистка), middleware аутентификации, CSRF, лимитов, заголовков, единая обработка ошибок с request id. В конфиг добавляются адрес сайта, флаг Secure, доверие к X-Forwarded-For.
-- **Этап 3.** Миграция habits/checkins, репозитории на doobie, маршруты, SQL серий (gaps-and-islands), LogHandler-счётчик для тестов N+1.
+- **Этап 3.** Миграция habits/checkins, репозитории на doobie, маршруты под `AuthGuard.protect`, SQL серий (gaps-and-islands), LogHandler-счётчик для тестов N+1, дополнить `SECURITY.md` (IDOR).
 - **Этап 4.** API-клиент вместо `src/lib/supabase.js` и `useTrackerData`, переключатель «Вход / Регистрация», загрузка отметок диапазонами, серии с сервера, @fontsource. Удаляются supabase-js, `supabase/`, `frontend/scripts/check-env.mjs`, `frontend/.env.example`, экран `NotConfigured`.
 - **Этап 5.** Стадия сборки фронта в Dockerfile, раздача статики и SPA-fallback (пересмотреть `base: './'`), README, SECURITY.md, финальная проверка.
 
@@ -93,7 +99,12 @@ CSP: `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' da
 - **http4s 0.23.x**, а не 1.0.0-M: стабильная линейка.
 - **testcontainers напрямую (2.x)**, без обёртки testcontainers-scala: она отстаёт по версиям, а нужен лишь запуск контейнера.
 - **sbt-native-packager (`stage`), а не fat jar:** отдельные jar-файлы не требуют правил слияния `META-INF/services`, через который Flyway находит поддержку Postgres. Запуск напрямую через `java -cp`, потому что скрипту packager'а нужен bash, а в alpine его нет.
-- **`POSTGRES_PASSWORD` без значения по умолчанию:** в репозитории нет паролей. Перед `docker compose up` нужно скопировать `.env.example` в `.env`.
+- **Пароли БД без значений по умолчанию:** в репозитории нет паролей. Перед `docker compose up` нужно скопировать `.env.example` в `.env`.
+- **`flyway_schema_history` закрыта от `tracker_app` миграцией `V2`:** иначе default privileges выдали бы роли приложения права на неё.
+- **Healthcheck базы идёт через TCP (`pg_isready -h 127.0.0.1`):** на время init-скриптов сервер слушает только unix-сокет, и проверка без `-h` сообщила бы о готовности раньше времени.
+- **Вход и CSRF:** запрос без `Origin` или не с `application/json` получает 403. В dev через Vite `SITE_ORIGIN=http://localhost:5173`.
+- **sbt 2 кеширует тесты:** `test` работает как `testQuick` и пропускает неизменившееся. Для полного прогона использовать `testFull`.
+- **Новые защищённые маршруты** подключать только через `AuthGuard.protect`: пользователь берётся из сессии, забыть проверку нельзя.
 - **`/api/health` использует `timeoutAndForget`**, а Hikari — `connectionTimeout` 5 секунд: JDBC-вызов нельзя отменить, и обычный `timeout` ждал бы его завершения.
 
 Локально JDK и sbt не установлены, поэтому sbt запускается в контейнере:

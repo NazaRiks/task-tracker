@@ -2,9 +2,9 @@ package tracker.http
 
 import cats.effect.IO
 import io.circe.Json
-import org.http4s.HttpRoutes
 import org.http4s.circe.*
 import org.http4s.dsl.io.*
+import org.http4s.{HttpRoutes, Status}
 import org.typelevel.log4cats.Logger
 
 import scala.concurrent.duration.*
@@ -26,11 +26,10 @@ object HealthRoutes:
           Ok(Json.obj("status" -> Json.fromString("ok")))
         case Left(error) =>
           logger.error(error)("Health check: база данных недоступна") *>
-            ServiceUnavailable(
-              Json.obj(
-                "error" -> Json.fromString("db_unavailable"),
-                "message" -> Json.fromString("База данных недоступна")
-              )
+            ApiError.response(
+              Status.ServiceUnavailable,
+              "db_unavailable",
+              "База данных недоступна"
             )
       }
     }

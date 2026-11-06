@@ -18,6 +18,7 @@ val flywayV = "13.12.1"
 val cirisV = "3.15.2"
 val log4catsV = "2.8.0"
 val logbackV = "1.6.6"
+val password4jV = "1.8.4"
 val munitCeV = "2.2.1"
 val testcontainersV = "2.0.5"
 
@@ -42,7 +43,9 @@ lazy val root = (project in file("."))
       "is.cir" %% "ciris" % cirisV,
       "org.typelevel" %% "log4cats-slf4j" % log4catsV,
       "ch.qos.logback" % "logback-classic" % logbackV,
+      "com.password4j" % "password4j" % password4jV,
       "org.typelevel" %% "munit-cats-effect" % munitCeV % Test,
+      "org.typelevel" %% "log4cats-testing" % log4catsV % Test,
       "org.testcontainers" % "testcontainers-postgresql" % testcontainersV % Test
     ),
     // Тесты поднимают Postgres и сервер: отдельная JVM и никакого параллелизма между сьютами.
